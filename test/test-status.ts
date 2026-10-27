@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
+import type { Frame } from "./fake-gateway.ts";
 
 registerHooks({
 	resolve: (specifier, context, next) =>
@@ -10,37 +11,45 @@ registerHooks({
 			: next(url, context)
 });
 
-const sent = [];
-let socket: FakeWebSocket | undefined;
+const sent: Frame[] = [];
+let socket!: FakeWebSocket;
 
 class FakeWebSocket {
 	static OPEN = 1;
 	readyState = 1;
+	onmessage: ((event: { data: string }) => void) | null = null;
+	onclose: ((event: { code: number; reason: string }) => void) | null = null;
 
 	constructor() {
 		socket = this;
 		queueMicrotask(() => this.receive({ op: 10, d: { heartbeat_interval: 600_000 } }));
 	}
 
-	receive(payload) {
-		this.onmessage({ data: JSON.stringify({ s: null, t: null, ...payload }) });
+	receive(payload: { op: number; d: unknown; s?: number; t?: string }) {
+		this.onmessage?.({ data: JSON.stringify({ s: null, t: null, ...payload }) });
 	}
 
-	send(data) {
+	send(data: string) {
 		sent.push(JSON.parse(data));
 	}
 
 	close(code = 1006, reason = "test") {
-		this.onclose({ code, reason });
+		this.onclose?.({ code, reason });
 	}
 }
 
-globalThis.__FAKE_WS__ = FakeWebSocket;
+(globalThis as { __FAKE_WS__?: typeof FakeWebSocket }).__FAKE_WS__ = FakeWebSocket;
 
-const { PresenceClient } = await import("../dist/gateway.js");
+const { PresenceClient }: typeof import("../src/gateway.ts") = await import(
+	new URL("../dist/gateway.js", import.meta.url).href
+);
 
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
-const lastFrame = (op) => sent.findLast((frame) => frame.op === op);
+function lastFrame<Op extends Frame["op"]>(op: Op): Extract<Frame, { op: Op }> {
+	const frame = sent.findLast((f): f is Extract<Frame, { op: Op }> => f.op === op);
+	assert.ok(frame, `no op${op} frame was sent`);
+	return frame;
+}
 const activities = () => lastFrame(3).d.activities;
 
 const READY = {
@@ -118,7 +127,7 @@ socket.receive({
 	t: "USER_SETTINGS_UPDATE",
 	d: { custom_status: { text: "brb", expires_at: new Date(Date.now() + 200).toISOString() } }
 });
-assert.equal(activities()[0].state, "brb");
+assert.equal(activities()[0]?.state, "brb");
 const beforeExpiry = sent.length;
 await tick(1_500);
 assert.equal(sent.length, beforeExpiry + 1, "an expiry publishes exactly once, with no timer loop behind it");
@@ -144,7 +153,7 @@ assert.equal(lastFrame(6).d.session_id, "abc", "a drop resumes the session inste
 const beforeResume = sent.length;
 socket.receive({ op: 0, s: 10, t: "RESUMED", d: {} });
 assert.ok(sent.length > beforeResume, "the resumed connection publishes the status itself");
-assert.equal(activities()[0].state, "keep", "the status survives the reconnect, expiry timer and all");
+assert.equal(activities()[0]?.state, "keep", "the status survives the reconnect, expiry timer and all");
 
 client.stop();
 await running;

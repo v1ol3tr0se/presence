@@ -18,12 +18,12 @@
 		"node": ">=22.18.0"
 	},
 	"scripts": {
-		"clean": "rm -rf dist tsconfig.tsbuildinfo",
-		"build": "yarn clean && tsc --pretty false",
-		"typecheck": "tsc --noEmit --pretty false",
+		"clean": "rm -rf dist",
+		"build": "yarn clean && tsc -p tsconfig.build.json --pretty false",
+		"typecheck": "tsc --pretty false",
 		"lint": "biome check .",
 		"format": "biome check --write .",
-		"watch": "tsc -w",
+		"watch": "tsc -p tsconfig.build.json -w",
 		"start": "node dist/index.js",
 		"test": "yarn build && node test/test.ts && node test/test-status.ts",
 		"verify": "yarn typecheck && yarn lint && yarn test",

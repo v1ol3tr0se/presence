@@ -1,10 +1,29 @@
-import { createServer } from "node:http";
-import { WebSocketServer } from "ws";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
+import { type WebSocket, WebSocketServer } from "ws";
+import type { Presence } from "../src/types.ts";
 
-export function startFakeGateway({ onIdentified } = {}) {
-	const seen = { headers: null, frames: [], connections: 0 };
+export type Frame =
+	| { op: 1; d: number | null }
+	| { op: 2; d: { token: string; properties: { browser: string }; presence: Presence } }
+	| { op: 3; d: Presence }
+	| { op: 6; d: { token: string; session_id: string; seq: number | null } };
+
+interface Seen {
+	headers: IncomingHttpHeaders | null;
+	frames: Frame[];
+	connections: number;
+}
+
+interface Options {
+	onIdentified?: (socket: WebSocket, connection: number) => void;
+}
+
+export function startFakeGateway({ onIdentified }: Options = {}) {
+	const seen: Seen = { headers: null, frames: [], connections: 0 };
 	const server = createServer();
 	const wss = new WebSocketServer({ server });
+	const url = () => `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
 	wss.on("connection", (socket, req) => {
 		seen.headers ??= req.headers;
@@ -25,7 +44,7 @@ export function startFakeGateway({ onIdentified } = {}) {
 						t: "READY",
 						d: {
 							session_id: "fake-session",
-							resume_gateway_url: `ws://127.0.0.1:${server.address().port}`,
+							resume_gateway_url: url(),
 							user: { id: "123456789012345678", username: "someone" },
 							user_settings: { custom_status: { text: "testing", emoji_name: "🔧" } },
 							guilds: []
@@ -41,10 +60,10 @@ export function startFakeGateway({ onIdentified } = {}) {
 		});
 	});
 
-	return new Promise((resolve) => {
+	return new Promise<{ url: string; seen: Seen; stop: () => void }>((resolve) => {
 		server.listen(0, () =>
 			resolve({
-				url: `ws://127.0.0.1:${server.address().port}`,
+				url: url(),
 				seen,
 				stop: () => {
 					wss.close();

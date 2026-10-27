@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type IncomingHttpHeaders } from "node:http";
 import { registerHooks } from "node:module";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer as createTlsServer } from "node:tls";
@@ -10,18 +11,18 @@ import WsWebSocket, { WebSocketServer } from "ws";
 import { startFakeGateway } from "./fake-gateway.ts";
 
 let passed = 0;
-const check = (n, what, how, fn) => {
+const check = (n: number, what: string, how: string, fn: () => void) => {
 	try {
 		fn();
 	} catch (error) {
-		console.error(`\n  ✗ ${n}. ${what}  [${how}]\n    ${error.message}\n`);
+		console.error(`\n  ✗ ${n}. ${what}  [${how}]\n    ${(error as Error).message}\n`);
 		process.exitCode = 1;
 		return;
 	}
 	passed++;
 	console.log(`  ✓ ${n.toString().padStart(2)}. ${what}  [${how}]`);
 };
-const code = (path) =>
+const code = (path: string) =>
 	readFileSync(path, "utf8")
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.replace(/^\s*\/\/.*$/gm, "");
@@ -48,10 +49,12 @@ registerHooks({
 	load(url, context, nextLoad) {
 		const result = nextLoad(url, context);
 		if (!url.endsWith("/dist/gateway.js")) return result;
-		return { ...result, source: result.source.toString().replace("wss://gateway.discord.gg", fake.url) };
+		return { ...result, source: String(result.source).replace("wss://gateway.discord.gg", fake.url) };
 	}
 });
-const { PresenceClient } = await import("../dist/gateway.js");
+const { PresenceClient }: typeof import("../src/gateway.ts") = await import(
+	new URL("../dist/gateway.js", import.meta.url).href
+);
 const client = new PresenceClient({ token: "fake-token-for-the-local-server", status: "idle" });
 client.run().catch(() => {});
 await new Promise((resolve) => setTimeout(resolve, 2_500));
@@ -79,7 +82,7 @@ check(1, "the client's own upgrade carries no User-Agent", "measured", () => {
 	);
 });
 check(2, "the client's upgrade is exactly the six headers ws sends", "measured", () =>
-	assert.deepEqual(Object.keys(fake.seen.headers).sort(), KNOWN_GOOD)
+	assert.deepEqual(Object.keys(fake.seen.headers ?? {}).sort(), KNOWN_GOOD)
 );
 check(3, "the client IDENTIFYs with its token and browser properties", "measured", () => {
 	assert.ok(identify, "no IDENTIFY was sent");
@@ -100,13 +103,16 @@ check(5, "a resumable drop produces a RESUME, not a second IDENTIFY", "measured"
 	assert.equal(sent.filter((f) => f.op === 2).length, 1, "spent a second IDENTIFY on a resumable drop");
 });
 check(6, "the account's custom status from READY is published", "measured", () => {
-	const published = presences.find((f) => f.d.activities?.length) ?? identify;
-	assert.equal(published.d.presence?.status ?? published.d.status, "idle");
-	const activity = (published.d.presence?.activities ?? published.d.activities ?? [])[0];
-	assert.ok(activity || presences.length, "no presence carrying the custom status was sent");
+	const published = presences.find((f) => f.d.activities.length > 0);
+	assert.ok(published, "no presence carrying the custom status was sent");
+	assert.equal(published.d.status, "idle");
+	assert.deepEqual(published.d.activities, [
+		{ type: 4, name: "Custom Status", state: "testing", emoji: { name: "🔧" } }
+	]);
 });
-function handshake(Ctor) {
-	return new Promise((resolve, reject) => {
+type SocketClass = new (url: string) => { onerror: unknown };
+function handshake(Ctor: SocketClass) {
+	return new Promise<IncomingHttpHeaders>((resolve, reject) => {
 		const server = createServer();
 		const wss = new WebSocketServer({ server });
 		wss.on("connection", (socket, req) => {
@@ -115,14 +121,14 @@ function handshake(Ctor) {
 			resolve(req.headers);
 		});
 		server.listen(0, () => {
-			const c = new Ctor(`ws://127.0.0.1:${server.address().port}/?v=9&encoding=json`);
+			const c = new Ctor(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/?v=9&encoding=json`);
 			c.onerror = () => {};
 		});
 		setTimeout(() => reject(new Error("handshake timed out")), 5_000).unref();
 	});
 }
-function alpn(Ctor) {
-	return new Promise((resolve, reject) => {
+function alpn(Ctor: SocketClass) {
+	return new Promise<string[] | null>((resolve, reject) => {
 		const dir = join(tmpdir(), "discord-online-test-tls");
 		const key = join(dir, "key.pem");
 		const cert = join(dir, "cert.pem");
@@ -148,7 +154,7 @@ function alpn(Ctor) {
 				{ stdio: "ignore" }
 			);
 		}
-		let offered = null;
+		let offered: string[] | null = null;
 		const server = createTlsServer({
 			key: readFileSync(key),
 			cert: readFileSync(cert),
@@ -165,7 +171,7 @@ function alpn(Ctor) {
 			}, 500).unref()
 		);
 		server.listen(0, () => {
-			const c = new Ctor(`wss://127.0.0.1:${server.address().port}/`);
+			const c = new Ctor(`wss://127.0.0.1:${(server.address() as AddressInfo).port}/`);
 			c.onerror = () => {};
 		});
 		setTimeout(() => reject(new Error("TLS probe timed out")), 10_000).unref();
@@ -187,7 +193,7 @@ check(9, "ws offers no ALPN where undici does, so the TLS fingerprints differ", 
 	assert.equal(alpnWs, null, `ws offered ALPN: ${JSON.stringify(alpnWs)}`);
 	assert.ok(Array.isArray(alpnGlobal) && alpnGlobal.length > 0, "undici offered no ALPN");
 });
-const run = (env) =>
+const run = (env: NodeJS.ProcessEnv) =>
 	spawnSync(process.execPath, ["dist/index.js"], {
 		env: { PATH: process.env.PATH, HOME: "/nonexistent", ...env },
 		encoding: "utf8",
@@ -209,7 +215,9 @@ check(12, "startup opens zero sockets before the config is valid", "measured", (
 		encoding: "utf8",
 		timeout: 15_000
 	});
-	if (strace.error) throw new Error(`strace unavailable (${strace.error.code}); ran no syscall check`);
+	if (strace.error) {
+		throw new Error(`strace unavailable (${(strace.error as NodeJS.ErrnoException).code}); ran no syscall check`);
+	}
 	const inet = strace.stderr.split("\n").filter((l) => /connect\(.*sin_(addr|port)/.test(l));
 	assert.equal(inet.length, 0, `opened ${inet.length} network connections:\n${inet.join("\n")}`);
 });
@@ -246,5 +254,8 @@ check(20, "ws is a runtime dependency, ships to the VPS, and 78 stays unrestarta
 	assert.match(readFileSync("deploy/deploy.sh", "utf8"), /--relative node_modules\/ws/);
 	assert.match(readFileSync("deploy/discord-online.service", "utf8"), /^RestartPreventExitStatus=78$/m);
 });
-console.log(`\n  ${passed}/20 checks passed\n`);
+check(21, "the installed unit runs from DEPLOY_DIR, not a hardcoded folder", "structural", () =>
+	assert.match(readFileSync("deploy/deploy.sh", "utf8"), /WorkingDirectory=%h\/\$REMOTE_DIR\|/)
+);
+console.log(`\n  ${passed}/21 checks passed\n`);
 if (process.exitCode) console.error("  FAILED — do not deploy\n");
