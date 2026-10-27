@@ -25,7 +25,8 @@ echo "==> Installing the unit"
 ssh "$HOST" "
 	set -e
 	mkdir -p ~/.config/systemd/user
-	install -m 644 ~/$REMOTE_DIR/deploy/$UNIT ~/.config/systemd/user/$UNIT
+	sed 's|^WorkingDirectory=.*|WorkingDirectory=%h/$REMOTE_DIR|' ~/$REMOTE_DIR/deploy/$UNIT > ~/.config/systemd/user/$UNIT
+	chmod 644 ~/.config/systemd/user/$UNIT
 	systemctl --user daemon-reload
 	systemctl --user enable $UNIT
 	if [ -s ~/$REMOTE_DIR/.env ]; then
