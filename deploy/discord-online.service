@@ -1,0 +1,27 @@
+[Unit]
+Description=Discord Online 24/7
+Documentation=https://github.com/v1ol3tr0se/presence
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/discord-online
+ExecStart=/usr/bin/node --expose-gc --max-old-space-size=128 dist/index.js
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=78
+
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+
+MemoryHigh=280M
+
+SyslogIdentifier=discord-online
+
+[Install]
+WantedBy=default.target
