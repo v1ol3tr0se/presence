@@ -3,3 +3,15 @@ dist
 node_modules
 *.tsbuildinfo
 .env
+
+*.log
+.env*
+*.bak*
+*.orig
+*.rej
+*~
+*.swp
+.directory
+package-lock.json
+pnpm-lock.yaml
+!.env.example
