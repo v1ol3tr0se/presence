@@ -6,7 +6,7 @@ keeps your discord showing online even when the app is closed, with your custom 
 this logs into your own account from a script, and discord's [terms](https://discord.com/terms) don't allow that. accounts get suspended over it, mine did once. you're using this knowing that, i'm not responsible if it happens to you
 
 ### what you need
-- node 22 or newer
+- node 22.18 or newer
 - git
 - any package manager (i use yarn)
 - your discord token. if you don't know how to get it this probably isn't for you
